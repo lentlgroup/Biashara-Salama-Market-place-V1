@@ -1,0 +1,6 @@
+{
+  "name": "Biashara Salama Marketplace",
+  "description": "A trusted business-technology brokerage and marketplace for Tanzanian SMEs to assess, compare, implement and manage verified POS, inventory, and accounting solutions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
