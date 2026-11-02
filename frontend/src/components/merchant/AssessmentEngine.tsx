@@ -37,8 +37,8 @@ export const AssessmentEngine: React.FC<AssessmentEngineProps> = ({
   const [activeStep, setActiveStep] = useState(1);
   const [formData, setFormData] = useState<Partial<BusinessAssessment>>({
     merchantId,
-    branchCount: merchant?.branchCount || 1,
-    staffCount: merchant?.staffCount || 3,
+    branchCount: merchant?.branches.length || 1,
+    staffCount: merchant?.branches.reduce((total, branch) => total + branch.staffCount, 0) || 3,
     powerReliability: 'intermittent_daily_cuts',
     powerBackupType: 'ups_generator',
     internetPrimary: 'mobile_4g_modem',

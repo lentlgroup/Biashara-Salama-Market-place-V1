@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   db:
     image: mysql:8.0
@@ -9,18 +8,38 @@ services:
       MYSQL_USER: biashara_user
       MYSQL_PASSWORD: biashara_pass
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "biashara_user", "-pbiashara_pass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   php:
-    image: php:8.1-cli
+    build:
+      context: ./backend/laravel
     working_dir: /var/www
     volumes:
       - ./backend/laravel:/var/www
+    environment:
+      APP_URL: http://localhost:8000
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: biashara
+      DB_USERNAME: biashara_user
+      DB_PASSWORD: biashara_pass
+    ports:
+      - "8000:8000"
     depends_on:
-      - db
-    command: ["sleep", "infinity"] # helper container; use host or artisan via composer in container if needed
+      db:
+        condition: service_healthy
+    # Run the PHP server directly so Docker's DB_* variables reach web requests.
+    # `artisan serve` intentionally strips most parent environment variables
+    # when a local .env file exists, which would point the container at 127.0.0.1.
+    command: ["sh", "-c", "php artisan migrate --force && cd public && exec php -S 0.0.0.0:8000 ../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php"]
 
   node:
     image: node:18
@@ -29,6 +48,26 @@ services:
       - ./frontend:/workdir
     ports:
       - "3000:3000"
+    environment:
+      BACKEND_URL: http://php:8000
+      VITE_API_URL: /api
+      VITE_API_WITH_CREDENTIALS: "false"
+    depends_on:
+      php:
+        condition: service_started
     command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev"]
+
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    restart: unless-stopped
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "8080:80"
+    depends_on:
+      db:
+        condition: service_healthy
 volumes:
   db_data:

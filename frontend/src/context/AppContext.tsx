@@ -1,5 +1,5 @@
 // Biashara Salama Marketplace - Core App State & Business Logic Engine
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import {
   User,
   UserRole,
@@ -21,6 +21,7 @@ import {
   ConsentRecord,
   MerchantLifecycleStage,
   SectorType,
+  BusinessAssessment,
 } from '../types';
 import {
   INITIAL_USERS,
@@ -40,6 +41,46 @@ import {
   INITIAL_DATA_RIGHTS_REQUESTS,
 } from '../data/seedData';
 import { translations } from '../translations';
+import { getMarketplaceState, saveMarketplaceState } from '../api';
+
+const MARKETPLACE_SCHEMA_VERSION = 1;
+const STORAGE_KEY = 'biashara_salama_store_v1';
+const LEGACY_STORAGE_SUFFIXES = [
+  'merchants',
+  'vendors',
+  'products',
+  'assessments',
+  'recommendations',
+  'handoffs',
+  'quotations',
+  'implementations',
+  'supportTickets',
+  'subscriptions',
+  'commissionLedger',
+  'auditLogs',
+  'dataRightsRequests',
+];
+
+type DatabaseStatus = 'connecting' | 'saving' | 'synced' | 'offline' | 'error';
+
+interface MarketplaceStateData {
+  users: User[];
+  merchants: Merchant[];
+  vendors: Vendor[];
+  products: Product[];
+  assessments: Assessment[];
+  recommendations: Recommendation[];
+  handoffs: VendorHandoff[];
+  quotations: Quotation[];
+  implementations: ImplementationPlan[];
+  supportTickets: SupportTicket[];
+  subscriptions: SubscriptionRecord[];
+  commissionRules: CommissionRule[];
+  commissionLedger: CommissionLedgerEntry[];
+  auditLogs: AuditEvent[];
+  dataRightsRequests: DataRightsRequest[];
+  consentRecords: ConsentRecord[];
+}
 
 interface AppContextType {
   language: Language;
@@ -83,6 +124,10 @@ interface AppContextType {
   commissionLedger: CommissionLedgerEntry[];
   auditLogs: AuditEvent[];
   dataRightsRequests: DataRightsRequest[];
+  consentRecords: ConsentRecord[];
+
+  databaseStatus: DatabaseStatus;
+  databaseError: string | null;
 
   // Action Methods
   createLead: (data: {
@@ -98,7 +143,7 @@ interface AppContextType {
   }) => string;
 
   saveAssessment: (assessment: Partial<Assessment> & { merchantId: string }) => void;
-  completeAssessment: (merchantId: string) => void;
+  completeAssessment: (assessment: string | BusinessAssessment) => void;
   
   issueRecommendation: (rec: Partial<Recommendation> & { merchantId: string; assessmentId: string }) => void;
   respondToRecommendation: (recId: string, decision: 'accept' | 'request_revision' | 'decline', comments: string) => void;
@@ -114,6 +159,7 @@ interface AppContextType {
   signMerchantAcceptance: (impId: string, signatoryName: string, signatoryRole: string, scope: string) => void;
 
   switchVendorMigration: (merchantId: string, targetProductId: string, reason: string) => void;
+  selectProduct: (merchantId: string, productId: string, recommendationId: string) => void;
   
   reconcileCommissionEntry: (entryId: string, status: 'matched' | 'variance_disputed' | 'settled', notes?: string) => void;
   
@@ -127,8 +173,6 @@ interface AppContextType {
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
-
-const STORAGE_KEY = 'biashara_salama_store_v1';
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [language, setLanguage] = useState<Language>('sw');
@@ -184,7 +228,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved ? JSON.parse(saved) : INITIAL_SUBSCRIPTIONS;
   });
 
-  const [commissionRules] = useState<CommissionRule[]>(INITIAL_COMMISSION_RULES);
+  const [commissionRules, setCommissionRules] = useState<CommissionRule[]>(INITIAL_COMMISSION_RULES);
 
   const [commissionLedger, setCommissionLedger] = useState<CommissionLedgerEntry[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_commissionLedger`);
@@ -201,30 +245,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved ? JSON.parse(saved) : INITIAL_DATA_RIGHTS_REQUESTS;
   });
 
-  const [allUsers] = useState<User[]>(INITIAL_USERS);
+  const [consentRecords, setConsentRecords] = useState<ConsentRecord[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>(INITIAL_USERS);
   const [currentUser, setCurrentUser] = useState<User>(INITIAL_USERS[0]); // default adviser
   const [activeTab, setActiveTab] = useState<string>('home');
   const [comparedProductIds, setComparedProductIds] = useState<string[]>(['prd_simba_retail', 'prd_kwanza_erp']);
   const [selectedMerchantId, setSelectedMerchantId] = useState<string>('mrc_001');
   const [selectedVendorId, setSelectedVendorId] = useState<string>('ven_simbapos');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus>('connecting');
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
+  const [isDatabaseHydrated, setIsDatabaseHydrated] = useState(false);
+  const databaseRevisionRef = useRef(0);
+  const lastSavedSnapshotRef = useRef('');
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const hydrationStartedRef = useRef(false);
 
-  // Sync to localStorage
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_merchants`, JSON.stringify(merchants));
-    localStorage.setItem(`${STORAGE_KEY}_vendors`, JSON.stringify(vendors));
-    localStorage.setItem(`${STORAGE_KEY}_products`, JSON.stringify(products));
-    localStorage.setItem(`${STORAGE_KEY}_assessments`, JSON.stringify(assessments));
-    localStorage.setItem(`${STORAGE_KEY}_recommendations`, JSON.stringify(recommendations));
-    localStorage.setItem(`${STORAGE_KEY}_handoffs`, JSON.stringify(handoffs));
-    localStorage.setItem(`${STORAGE_KEY}_quotations`, JSON.stringify(quotations));
-    localStorage.setItem(`${STORAGE_KEY}_implementations`, JSON.stringify(implementations));
-    localStorage.setItem(`${STORAGE_KEY}_supportTickets`, JSON.stringify(supportTickets));
-    localStorage.setItem(`${STORAGE_KEY}_subscriptions`, JSON.stringify(subscriptions));
-    localStorage.setItem(`${STORAGE_KEY}_commissionLedger`, JSON.stringify(commissionLedger));
-    localStorage.setItem(`${STORAGE_KEY}_auditLogs`, JSON.stringify(auditLogs));
-    localStorage.setItem(`${STORAGE_KEY}_dataRightsRequests`, JSON.stringify(dataRightsRequests));
-  }, [
+  const marketplaceState = useMemo<MarketplaceStateData>(() => ({
+    users: allUsers,
     merchants,
     vendors,
     products,
@@ -235,10 +273,124 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     implementations,
     supportTickets,
     subscriptions,
+    commissionRules,
     commissionLedger,
     auditLogs,
     dataRightsRequests,
+    consentRecords,
+  }), [
+    allUsers,
+    merchants,
+    vendors,
+    products,
+    assessments,
+    recommendations,
+    handoffs,
+    quotations,
+    implementations,
+    supportTickets,
+    subscriptions,
+    commissionRules,
+    commissionLedger,
+    auditLogs,
+    dataRightsRequests,
+    consentRecords,
   ]);
+
+  // On the first successful connection, import existing browser data into MySQL.
+  useEffect(() => {
+    if (hydrationStartedRef.current) return;
+    hydrationStartedRef.current = true;
+
+    const hydrate = async () => {
+      setDatabaseStatus('connecting');
+      setDatabaseError(null);
+
+      try {
+        const response = await getMarketplaceState<MarketplaceStateData>();
+
+        databaseRevisionRef.current = response.revision;
+
+        if (response.initialized && response.data) {
+          const data = response.data;
+          setAllUsers(data.users);
+          setMerchants(data.merchants);
+          setVendors(data.vendors);
+          setProducts(data.products);
+          setAssessments(data.assessments);
+          setRecommendations(data.recommendations);
+          setHandoffs(data.handoffs);
+          setQuotations(data.quotations);
+          setImplementations(data.implementations);
+          setSupportTickets(data.supportTickets);
+          setSubscriptions(data.subscriptions);
+          setCommissionRules(data.commissionRules);
+          setCommissionLedger(data.commissionLedger);
+          setAuditLogs(data.auditLogs);
+          setDataRightsRequests(data.dataRightsRequests);
+          setConsentRecords(data.consentRecords);
+          lastSavedSnapshotRef.current = JSON.stringify(data);
+        } else {
+          const hasLegacyLocalData = LEGACY_STORAGE_SUFFIXES.some(
+            (suffix) => localStorage.getItem(`${STORAGE_KEY}_${suffix}`) !== null,
+          );
+          const saved = await saveMarketplaceState({
+            schemaVersion: MARKETPLACE_SCHEMA_VERSION,
+            revision: 0,
+            migratedFromLocalStorage: hasLegacyLocalData,
+            data: marketplaceState,
+          });
+
+          databaseRevisionRef.current = saved.revision;
+          lastSavedSnapshotRef.current = JSON.stringify(marketplaceState);
+          LEGACY_STORAGE_SUFFIXES.forEach((suffix) => {
+            localStorage.removeItem(`${STORAGE_KEY}_${suffix}`);
+          });
+        }
+
+        setDatabaseStatus('synced');
+      } catch (error) {
+        setDatabaseStatus('offline');
+        setDatabaseError(error instanceof Error ? error.message : 'Unable to connect to the database API.');
+      } finally {
+        setIsDatabaseHydrated(true);
+      }
+    };
+
+    void hydrate();
+  }, [marketplaceState]);
+
+  // Debounce changes and serialize writes so optimistic revisions remain ordered.
+  useEffect(() => {
+    if (!isDatabaseHydrated) return;
+
+    const serializedSnapshot = JSON.stringify(marketplaceState);
+    if (serializedSnapshot === lastSavedSnapshotRef.current) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setDatabaseStatus('saving');
+      setDatabaseError(null);
+
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const saved = await saveMarketplaceState({
+            schemaVersion: MARKETPLACE_SCHEMA_VERSION,
+            revision: databaseRevisionRef.current,
+            data: marketplaceState,
+          });
+          databaseRevisionRef.current = saved.revision;
+          lastSavedSnapshotRef.current = serializedSnapshot;
+          setDatabaseStatus('synced');
+        })
+        .catch((error: unknown) => {
+          setDatabaseStatus('error');
+          setDatabaseError(error instanceof Error ? error.message : 'Unable to save marketplace data.');
+        });
+    }, 750);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isDatabaseHydrated, marketplaceState]);
 
   const logAction = (action: string, entityType: string, entityId: string, details: string) => {
     const newLog: AuditEvent = {
@@ -424,14 +576,67 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     logAction('ASSESSMENT_DRAFT_SAVED', 'Assessment', assessmentData.merchantId, 'Draft assessment updated.');
   };
 
-  const completeAssessment = (merchantId: string) => {
-    setAssessments((prev) =>
-      prev.map((a) =>
-        a.merchantId === merchantId
-          ? { ...a, isComplete: true, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-          : a
-      )
-    );
+  const completeAssessment = (assessment: string | BusinessAssessment) => {
+    const merchantId = typeof assessment === 'string' ? assessment : assessment.merchantId;
+    const completedAt = new Date().toISOString();
+
+    setAssessments((prev) => {
+      if (typeof assessment === 'string') {
+        return prev.map((item) =>
+          item.merchantId === merchantId
+            ? { ...item, isComplete: true, completedAt, updatedAt: completedAt }
+            : item
+        );
+      }
+
+      const merchant = merchants.find((item) => item.id === merchantId);
+      const normalizedAssessment: Assessment = {
+        id: assessment.id,
+        merchantId,
+        version: 1,
+        templateVersion: 'v1.0-diagnostic',
+        isComplete: true,
+        responses: {
+          sectorWorkflow: merchant?.sector || 'general_trade',
+          businessSize: assessment.staffCount <= 5 ? 'micro' : assessment.staffCount <= 20 ? 'small' : 'medium',
+          branchCount: assessment.branchCount,
+          userCount: assessment.staffCount,
+          salesStockNeeds: assessment.requiredModules,
+          accountingRequirements: assessment.traVfdRequired ? ['TRA VFD compliant receipting'] : [],
+          connectivity:
+            assessment.internetPrimary === 'fiber_broadband'
+              ? 'reliable_internet'
+              : assessment.internetPrimary === 'no_reliable_internet'
+                ? 'offline_first_required'
+                : 'intermittent_internet',
+          hardwareNeeds: assessment.hardwareInventory,
+          requiredIntegrations: assessment.traVfdRequired ? ['TRA VFD Web API'] : [],
+          monthlyBudgetTZS: assessment.monthlyBudgetTZS,
+          upfrontBudgetTZS: assessment.hardwareBudgetTZS,
+          dataMigrationNeeded: assessment.dataMigrationNeeded,
+          supportExpectations: 'phone_whatsapp',
+          implementationTiming: assessment.targetGoLiveDays <= 7 ? 'immediate_1_week' : 'within_1_month',
+          existingPainPoints: assessment.notes,
+          merchantProvidedFacts: `${assessment.branchCount} branches and ${assessment.staffCount} staff members.`,
+          adviserObservations: `Deployment preference: ${assessment.deploymentPreference}; offline tolerance: ${assessment.offlineToleranceHours} hours.`,
+        },
+        inferredNeeds: [
+          ...assessment.requiredModules,
+          assessment.traVfdRequired ? 'TRA VFD compliance' : 'Standard receipting',
+        ],
+        adviserNotes: assessment.notes,
+        adviserId: currentUser.id,
+        completedAt,
+        updatedAt: completedAt,
+      };
+
+      const existingIndex = prev.findIndex((item) => item.merchantId === merchantId);
+      if (existingIndex < 0) return [normalizedAssessment, ...prev];
+
+      const next = [...prev];
+      next[existingIndex] = normalizedAssessment;
+      return next;
+    });
 
     setMerchants((prev) =>
       prev.map((m) =>
@@ -765,6 +970,114 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     logAction('GO_LIVE_ACCEPTED', 'ImplementationPlan', impId, `Merchant signed go-live acceptance: ${signatoryName}`);
   };
 
+  const selectProduct = (merchantId: string, productId: string, recommendationId: string) => {
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+
+    const selectedAt = new Date().toISOString();
+    setMerchants((prev) =>
+      prev.map((merchant) =>
+        merchant.id === merchantId
+          ? {
+              ...merchant,
+              stage: 'implementation',
+              currentVendorId: product.vendorId,
+              currentProductId: product.id,
+              currentPlanName: product.plans[0]?.planName,
+              updatedAt: selectedAt,
+            }
+          : merchant
+      )
+    );
+
+    setRecommendations((prev) =>
+      prev.map((recommendation) =>
+        recommendation.id === recommendationId
+          ? {
+              ...recommendation,
+              status: 'accepted',
+              merchantDecision: {
+                action: 'accept',
+                selectedProductId: productId,
+                comments: 'Product selected from the merchant portal.',
+                decidedByUserId: currentUser.id,
+                decidedByUserName: currentUser.name,
+                timestamp: selectedAt,
+              },
+              updatedAt: selectedAt,
+            }
+          : recommendation
+      )
+    );
+
+    setImplementations((prev) => {
+      if (prev.some((implementation) => implementation.merchantId === merchantId)) return prev;
+
+      const dueDate = (daysFromNow: number) =>
+        new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const implementation: ImplementationPlan = {
+        id: `imp_${Date.now()}`,
+        merchantId,
+        quotationId: `pending_${recommendationId}`,
+        vendorId: product.vendorId,
+        productId,
+        specialistId: 'usr_impl_01',
+        specialistName: 'Neema Lyimo',
+        tasks: [
+          {
+            id: `tsk_${Date.now()}_setup`,
+            title: 'Confirm implementation scope and configure product',
+            category: 'product_config',
+            assignedTo: product.vendorName,
+            assignedRole: 'vendor',
+            dueDate: dueDate(2),
+            status: 'pending',
+            isCriticalGoLiveBlocker: true,
+          },
+          {
+            id: `tsk_${Date.now()}_migration`,
+            title: 'Prepare and migrate merchant data',
+            category: 'data_migration',
+            assignedTo: 'Neema Lyimo',
+            assignedRole: 'implementation_specialist',
+            dueDate: dueDate(Math.max(3, product.implementationEffortDays - 2)),
+            status: 'pending',
+            isCriticalGoLiveBlocker: true,
+          },
+          {
+            id: `tsk_${Date.now()}_training`,
+            title: 'Train merchant users and verify competency',
+            category: 'training',
+            assignedTo: 'Neema Lyimo',
+            assignedRole: 'implementation_specialist',
+            dueDate: dueDate(Math.max(4, product.implementationEffortDays - 1)),
+            status: 'pending',
+            isCriticalGoLiveBlocker: true,
+          },
+          {
+            id: `tsk_${Date.now()}_go_live`,
+            title: 'Complete go-live checks and merchant acceptance',
+            category: 'go_live_checks',
+            assignedTo: 'Neema Lyimo',
+            assignedRole: 'implementation_specialist',
+            dueDate: dueDate(product.implementationEffortDays),
+            status: 'pending',
+            isCriticalGoLiveBlocker: true,
+          },
+        ],
+        hardwareInventory: [],
+        trainingRecords: [],
+        goLiveChecklistPassed: false,
+        createdAt: selectedAt,
+        updatedAt: selectedAt,
+      };
+
+      return [implementation, ...prev];
+    });
+
+    logAction('PRODUCT_SELECTED', 'Product', productId, `Merchant ${merchantId} selected ${product.name}.`);
+  };
+
   const switchVendorMigration = (merchantId: string, targetProductId: string, reason: string) => {
     const merch = merchants.find((m) => m.id === merchantId);
     const targetProd = products.find((p) => p.id === targetProductId);
@@ -835,10 +1148,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const recordConsent = (consentData: Omit<ConsentRecord, 'id' | 'grantedAt'>) => {
+    const consent: ConsentRecord = {
+      ...consentData,
+      id: `cons_${Date.now()}`,
+      grantedAt: new Date().toISOString(),
+    };
+    setConsentRecords((prev) => [consent, ...prev]);
     logAction(
       'CONSENT_RECORDED',
       'ConsentRecord',
-      consentData.merchantId,
+      consent.id,
       `Consent granted for version ${consentData.version} via ${consentData.channel}`
     );
   };
@@ -856,7 +1175,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const resetToSampleData = () => {
-    localStorage.clear();
+    LEGACY_STORAGE_SUFFIXES.forEach((suffix) => {
+      localStorage.removeItem(`${STORAGE_KEY}_${suffix}`);
+    });
+    setAllUsers(INITIAL_USERS);
     setMerchants(INITIAL_MERCHANTS);
     setVendors(INITIAL_VENDORS);
     setProducts(INITIAL_PRODUCTS);
@@ -867,9 +1189,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setImplementations(INITIAL_IMPLEMENTATIONS);
     setSupportTickets(INITIAL_SUPPORT_TICKETS);
     setSubscriptions(INITIAL_SUBSCRIPTIONS);
+    setCommissionRules(INITIAL_COMMISSION_RULES);
     setCommissionLedger(INITIAL_COMMISSION_LEDGER);
     setAuditLogs(INITIAL_AUDIT_LOGS);
     setDataRightsRequests(INITIAL_DATA_RIGHTS_REQUESTS);
+    setConsentRecords([]);
     setCurrentUser(INITIAL_USERS[0]);
     setSelectedMerchantId('mrc_001');
     logAction('RESET_SAMPLE_DATA', 'System', 'all', 'Reset application state to default demonstration dataset.');
@@ -913,6 +1237,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         commissionLedger,
         auditLogs,
         dataRightsRequests,
+        consentRecords,
+        databaseStatus,
+        databaseError,
         createLead,
         saveAssessment,
         completeAssessment,
@@ -925,6 +1252,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         acceptTicketResolution,
         updateImplementationTask,
         signMerchantAcceptance,
+        selectProduct,
         switchVendorMigration,
         reconcileCommissionEntry,
         approveVendor,

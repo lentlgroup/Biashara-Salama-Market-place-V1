@@ -24,7 +24,7 @@ export const VendorPortal: React.FC = () => {
   const activeVendor = vendors.find((v) => v.id === currentUser.vendorId) || vendors[0];
   const vendorProducts = products.filter((p) => p.vendorId === activeVendor.id);
   const vendorLeads = merchants.filter(
-    (m) => m.activeVendorId === activeVendor.id || m.stage === 'lead_intake' || m.stage === 'recommendation_issued'
+    (m) => m.currentVendorId === activeVendor.id || m.stage === 'lead' || m.stage === 'recommendation_issued'
   );
 
   return (
@@ -42,7 +42,7 @@ export const VendorPortal: React.FC = () => {
           </div>
           <h1 className="text-2xl font-extrabold text-[#0B2F66]">{activeVendor.brandName}</h1>
           <p className="text-xs text-slate-500">
-            Jina la Kisheria: <strong className="text-slate-800">{activeVendor.legalName}</strong> | BRELA: {activeVendor.brelaNumber} | TIN: {activeVendor.tinNumber}
+            Jina la Kisheria: <strong className="text-slate-800">{activeVendor.legalName}</strong> | BRELA: {activeVendor.registrationNumber} | TIN: {activeVendor.tinNumber}
           </p>
         </div>
 
@@ -122,7 +122,7 @@ export const VendorPortal: React.FC = () => {
                     Mwasiliani: <strong>{m.contacts[0]?.name}</strong> ({m.contacts[0]?.phone}) | Sekta: {m.sector} | Mkoa: {m.region}
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Tarehe ya Kuingia: {m.createdAt.split('T')[0]} | Chanzo: {m.sourceChannel}
+                    Tarehe ya Kuingia: {m.createdAt.split('T')[0]} | Chanzo: {m.source}
                   </div>
                 </div>
 

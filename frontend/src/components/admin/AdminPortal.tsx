@@ -23,6 +23,15 @@ import {
   Plus,
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
+import type { ImplementationPlan } from '../../types';
+
+const getImplementationStatus = (implementation: ImplementationPlan) => {
+  if (implementation.tasks.every((task) => task.status === 'completed')) return 'completed';
+  if (implementation.tasks.some((task) => task.status === 'in_progress')) return 'in_progress';
+  if (implementation.tasks.some((task) => task.status === 'blocked')) return 'blocked';
+
+  return 'pending';
+};
 
 export const AdminPortal: React.FC = () => {
   const {
@@ -36,7 +45,6 @@ export const AdminPortal: React.FC = () => {
     supportTickets,
     auditLogs,
     issueRecommendation,
-    updateMerchantStage,
     t,
   } = useApp();
 
@@ -61,38 +69,42 @@ export const AdminPortal: React.FC = () => {
   );
 
   const handleIssueRecommendationSubmit = (merchantId: string) => {
+    const assessment = assessments.find((item) => item.merchantId === merchantId);
+    if (!assessment) return;
+
+    const candidateProducts = products
+      .filter((product) => product.approvalStatus === 'approved')
+      .slice(0, 2);
+
     issueRecommendation({
       merchantId,
-      adviserId: currentUser.id,
-      adviserName: currentUser.name,
-      adviserRole: 'Trained Technology Adviser & Broker (Biashara Salama)',
-      rationale: recRationale,
-      recommendedProducts: [
-        {
-          productId: 'PRD-001',
-          productName: 'SimbaPOS Retail & Supermarket',
-          vendorId: 'VND-001',
-          vendorName: 'SimbaPOS Technologies Ltd',
-          rank: 1,
-          fitScore: 96,
-          whyThisProduct: 'Uwezo mkubwa wa kufanya kazi bila intaneti (Full Offline Sync siku 14) na uthibitisho wa TRA VFD.',
-          monthlyCostTZS: 85000,
-          setupCostTZS: 250000,
-          estimatedRolloutDays: 10,
-        },
-        {
-          productId: 'PRD-002',
-          productName: 'Twiga Inventory & Distribution Pro',
-          vendorId: 'VND-002',
-          vendorName: 'Twiga Software Systems Tanzania',
-          rank: 2,
-          fitScore: 88,
-          whyThisProduct: 'Chaguo zuri kwa ajili ya kufuatilia stoo kuu na usambazaji wa bidhaa kwa wauzaji wa jumla.',
-          monthlyCostTZS: 120000,
-          setupCostTZS: 350000,
-          estimatedRolloutDays: 14,
-        },
-      ],
+      assessmentId: assessment.id,
+      adviserRationale: recRationale,
+      recommendations: candidateProducts.map((product, index) => {
+        const plan = product.plans[0];
+        const annualSoftwareCost = plan?.annualFeeTZS || (plan?.monthlyFeeTZS || 0) * 12;
+
+        return {
+          productId: product.id,
+          productName: product.name,
+          vendorName: product.vendorName,
+          isPrimaryRecommendation: index === 0,
+          matchScore: index === 0 ? 96 : 88,
+          matchedRequirements: product.features.slice(0, 5),
+          identifiedGaps: [],
+          limitations: product.offlineCapabilities === 'cloud_only' ? ['Requires reliable internet connectivity'] : [],
+          assumptions: ['Pricing and implementation scope remain subject to vendor confirmation.'],
+          totalCostEstimateTZS: {
+            softwareYear1: annualSoftwareCost,
+            hardware: 0,
+            setupAndMigration: plan?.setupFeeTZS || 0,
+            training: 0,
+            estimatedAnnualRecurring: annualSoftwareCost,
+          },
+          implementationNotes: `Estimated rollout: ${product.implementationEffortDays} days. ${product.supportSLA}`,
+          dataExportConsiderations: `Supported exports: ${product.dataExportFormats.join(', ')}.`,
+        };
+      }),
     });
 
     setSelectedMerchantForRec(null);
@@ -133,7 +145,7 @@ export const AdminPortal: React.FC = () => {
       <div className="flex items-center gap-1 border-b border-slate-200 bg-white p-2 rounded-xl shadow-2xs overflow-x-auto text-xs">
         {[
           { id: 'analytics', label: 'Dashibodi Kuu (Marketplace Analytics)', icon: TrendingUp },
-          { id: 'advisory', label: 'Ushauri wa Wateja (Advisory & Leads)', icon: Award, badge: merchants.filter((m) => m.stage === 'assessment_completed').length },
+          { id: 'advisory', label: 'Ushauri wa Wateja (Advisory & Leads)', icon: Award, badge: merchants.filter((m) => m.stage === 'assessment_complete').length },
           { id: 'implementations', label: 'Utekelezaji & Mafunzo (Rollouts)', icon: CheckCircle2, badge: implementations.length },
           { id: 'compliance', label: 'Uhakiki & TRA (Compliance Roster)', icon: Scale },
           { id: 'finance', label: 'Upatanisho wa Kifedha (Brokerage Rec)', icon: DollarSign },
@@ -367,23 +379,23 @@ export const AdminPortal: React.FC = () => {
                   <div>
                     <span className="font-bold text-slate-900 text-sm">Mradi: {imp.id}</span>
                     <span className="text-slate-500 block text-[11px]">
-                      Mfanyabiashara: {imp.merchantId} | Mtaalamu: {imp.assignedSpecialistName}
+                      Mfanyabiashara: {imp.merchantId} | Mtaalamu: {imp.specialistName}
                     </span>
                   </div>
                   <Badge variant="primary" size="sm">
-                    {imp.status}
+                    {getImplementationStatus(imp)}
                   </Badge>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
-                  {imp.milestones.map((m) => (
+                  {imp.tasks.map((m) => (
                     <div
                       key={m.id}
                       className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 flex items-center justify-between text-xs"
                     >
                       <div>
                         <strong className="text-slate-800 block text-[11px]">{m.title}</strong>
-                        <span className="text-[10px] text-slate-500">Tarehe Lengo: {m.targetDate}</span>
+                        <span className="text-[10px] text-slate-500">Tarehe Lengo: {m.dueDate}</span>
                       </div>
                       <Badge
                         variant={m.status === 'completed' ? 'success' : 'warning'}
@@ -418,7 +430,7 @@ export const AdminPortal: React.FC = () => {
                 <div className="space-y-0.5">
                   <strong className="text-slate-900 text-sm">{v.brandName} ({v.legalName})</strong>
                   <div className="text-slate-500 text-[11px]">
-                    BRELA: {v.brelaNumber} | TIN: {v.tinNumber} | Makao Makuu: {v.headquarters}
+                    BRELA: {v.registrationNumber} | TIN: {v.tinNumber} | Makao Makuu: {v.headquarters}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

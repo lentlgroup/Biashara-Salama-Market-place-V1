@@ -21,6 +21,15 @@ import {
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
 import { AssessmentEngine } from './AssessmentEngine';
+import type { ImplementationPlan, SupportTicket } from '../../types';
+
+const getImplementationStatus = (implementation: ImplementationPlan) => {
+  if (implementation.tasks.every((task) => task.status === 'completed')) return 'completed';
+  if (implementation.tasks.some((task) => task.status === 'in_progress')) return 'in_progress';
+  if (implementation.tasks.some((task) => task.status === 'blocked')) return 'blocked';
+
+  return 'pending';
+};
 
 export const MerchantPortal: React.FC = () => {
   const {
@@ -30,6 +39,7 @@ export const MerchantPortal: React.FC = () => {
     assessments,
     implementations,
     supportTickets,
+    products,
     selectProduct,
     createSupportTicket,
     t,
@@ -49,10 +59,8 @@ export const MerchantPortal: React.FC = () => {
   const [showNewTicketModal, setShowNewTicketModal] = useState(false);
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketDescription, setTicketDescription] = useState('');
-  const [ticketCategory, setTicketCategory] = useState<
-    'tra_vfd_failure' | 'offline_sync_error' | 'hardware_printer' | 'user_training' | 'billing_dispute' | 'general'
-  >('tra_vfd_failure');
-  const [ticketPriority, setTicketPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('high');
+  const [ticketCategory, setTicketCategory] = useState<SupportTicket['category']>('data_issue');
+  const [ticketPriority, setTicketPriority] = useState<SupportTicket['severity']>('high');
 
   if (!activeMerchant) {
     return <div className="p-8 text-center text-xs">No merchant record found.</div>;
@@ -62,6 +70,8 @@ export const MerchantPortal: React.FC = () => {
   const latestRecommendation = merchantRecommendations[merchantRecommendations.length - 1];
   const merchantAssessment = assessments.find((a) => a.merchantId === activeMerchant.id);
   const activeImplementation = implementations.find((imp) => imp.merchantId === activeMerchant.id);
+  const activeImplementationStatus = activeImplementation ? getImplementationStatus(activeImplementation) : null;
+  const targetGoLiveDate = activeImplementation?.tasks[activeImplementation.tasks.length - 1]?.dueDate;
   const merchantTickets = supportTickets.filter((t) => t.merchantId === activeMerchant.id);
 
   const handleCreateTicket = (e: React.FormEvent) => {
@@ -70,13 +80,12 @@ export const MerchantPortal: React.FC = () => {
 
     createSupportTicket({
       merchantId: activeMerchant.id,
-      vendorId: activeMerchant.activeVendorId || 'VND-001',
-      productId: activeMerchant.activeProductId || 'PRD-001',
-      subject: ticketSubject,
+      vendorId: activeMerchant.currentVendorId,
+      productId: activeMerchant.currentProductId,
+      title: ticketSubject,
       description: ticketDescription,
       category: ticketCategory,
-      priority: ticketPriority,
-      reportedBy: currentUser.name,
+      severity: ticketPriority,
     });
 
     setTicketSubject('');
@@ -86,19 +95,19 @@ export const MerchantPortal: React.FC = () => {
 
   const getLifecycleStageLabel = (stage: string) => {
     switch (stage) {
-      case 'lead_intake':
+      case 'lead':
         return '1. Lead & Mahitaji ya Awali';
-      case 'diagnostic_scheduled':
+      case 'assessment_in_progress':
         return '2. Tathmini ya Biashara Inafanyika';
-      case 'assessment_completed':
+      case 'assessment_complete':
         return '3. Tathmini Imekamilika';
       case 'recommendation_issued':
         return '4. Ushauri Umetolewa (Chagua Mfumo)';
-      case 'selection_approved':
+      case 'accepted':
         return '5. Uteuzi Umeidhinishwa';
-      case 'onboarding_in_progress':
+      case 'implementation':
         return '6. Utekelezaji & Mafunzo (Onboarding)';
-      case 'active_in_production':
+      case 'active':
         return '7. Mfumo Upo Kazini (Active Live)';
       default:
         return stage;
@@ -135,7 +144,7 @@ export const MerchantPortal: React.FC = () => {
             </p>
           </div>
 
-          {activeMerchant.stage === 'lead_intake' || !merchantAssessment ? (
+          {activeMerchant.stage === 'lead' || !merchantAssessment ? (
             <button
               onClick={() => setIsTakingAssessment(true)}
               className="px-4 py-2.5 bg-[#D4AF37] hover:bg-[#c5a02e] text-[#0B2F66] rounded-xl text-xs font-bold shadow-sm hover:shadow transition-all flex items-center gap-1.5 cursor-pointer uppercase tracking-tight"
@@ -205,46 +214,46 @@ export const MerchantPortal: React.FC = () => {
         {/* Step 3: Ushauri wa Mtaalam */}
         <div
           className={`relative flex flex-col p-4 rounded-xl shadow-xs transition-all ${
-            latestRecommendation && !activeMerchant.activeProductId
+            latestRecommendation && !activeMerchant.currentProductId
               ? 'bg-[#0B2F66] text-white shadow-md'
-              : activeMerchant.activeProductId
+              : activeMerchant.currentProductId
               ? 'bg-white border border-gray-200'
               : 'bg-white border border-gray-200 opacity-60'
           }`}
         >
-          <span className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${latestRecommendation && !activeMerchant.activeProductId ? 'text-[#D4AF37]' : 'text-gray-500'}`}>
+          <span className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${latestRecommendation && !activeMerchant.currentProductId ? 'text-[#D4AF37]' : 'text-gray-500'}`}>
             HATUA YA 3
           </span>
-          <span className={`font-bold text-sm ${latestRecommendation && !activeMerchant.activeProductId ? 'text-white' : 'text-gray-800'}`}>
+          <span className={`font-bold text-sm ${latestRecommendation && !activeMerchant.currentProductId ? 'text-white' : 'text-gray-800'}`}>
             Ushauri wa Mtaalam
           </span>
           <div className="mt-2.5 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-            <div className={`h-full bg-[#D4AF37] ${activeMerchant.activeProductId ? 'w-full' : latestRecommendation ? 'w-2/3' : 'w-0'}`}></div>
+            <div className={`h-full bg-[#D4AF37] ${activeMerchant.currentProductId ? 'w-full' : latestRecommendation ? 'w-2/3' : 'w-0'}`}></div>
           </div>
           <span className="text-[10px] mt-2 font-medium text-gray-500">
-            {activeMerchant.activeProductId ? '✓ Uteuzi Umekamilika' : latestRecommendation ? 'Dossier Ipo Tayari' : 'Inasubiriwa'}
+            {activeMerchant.currentProductId ? '✓ Uteuzi Umekamilika' : latestRecommendation ? 'Dossier Ipo Tayari' : 'Inasubiriwa'}
           </span>
         </div>
 
         {/* Step 4: Rollout */}
         <div
           className={`relative flex flex-col p-4 rounded-xl shadow-xs transition-all ${
-            activeMerchant.activeProductId
+            activeMerchant.currentProductId
               ? 'bg-[#0B2F66] text-white shadow-md'
               : 'bg-white border border-gray-200 opacity-60'
           }`}
         >
-          <span className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${activeMerchant.activeProductId ? 'text-[#D4AF37]' : 'text-gray-400'}`}>
+          <span className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${activeMerchant.currentProductId ? 'text-[#D4AF37]' : 'text-gray-400'}`}>
             HATUA YA 4
           </span>
-          <span className={`font-bold text-sm ${activeMerchant.activeProductId ? 'text-white' : 'text-gray-400'}`}>
+          <span className={`font-bold text-sm ${activeMerchant.currentProductId ? 'text-white' : 'text-gray-400'}`}>
             Rollout & Go-Live
           </span>
           <div className="mt-2.5 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-            <div className={`h-full bg-emerald-400 ${activeImplementation?.status === 'completed' ? 'w-full' : activeMerchant.activeProductId ? 'w-1/2' : 'w-0'}`}></div>
+            <div className={`h-full bg-emerald-400 ${activeImplementationStatus === 'completed' ? 'w-full' : activeMerchant.currentProductId ? 'w-1/2' : 'w-0'}`}></div>
           </div>
           <span className="text-[10px] mt-2 font-medium text-gray-500">
-            {activeImplementation?.status === 'completed' ? '✓ Mfumo Kazini' : 'Utekelezaji'}
+            {activeImplementationStatus === 'completed' ? '✓ Mfumo Kazini' : 'Utekelezaji'}
           </span>
         </div>
       </div>
@@ -342,7 +351,7 @@ export const MerchantPortal: React.FC = () => {
               </h3>
               <p className="text-xs text-gray-500">
                 {merchantAssessment
-                  ? `Matawi: ${merchantAssessment.branchCount} | Wafanyakazi: ${merchantAssessment.staffCount} | TRA VFD: Ndiyo`
+                  ? `Matawi: ${merchantAssessment.responses.branchCount} | Watumiaji: ${merchantAssessment.responses.userCount} | TRA VFD: Ndiyo`
                   : 'Mshauri wetu anahitaji taarifa za matawi yako na vifaa ulivyonavyo.'}
               </p>
             </div>
@@ -362,7 +371,7 @@ export const MerchantPortal: React.FC = () => {
               </h3>
               <p className="text-xs text-gray-500">
                 {latestRecommendation
-                  ? `Mshauri ${latestRecommendation.adviserName} amependekeza mifumo ${latestRecommendation.recommendedProducts.length}.`
+                  ? `Mshauri ${latestRecommendation.namedAdviserName} amependekeza mifumo ${latestRecommendation.recommendations.length}.`
                   : 'Baada ya tathmini, mshauri ataandaa orodha ya mifumo inayokufaa.'}
               </p>
             </div>
@@ -374,27 +383,27 @@ export const MerchantPortal: React.FC = () => {
                   Hatua ya 3: Utekelezaji
                 </span>
                 <Badge
-                  variant={activeImplementation?.status === 'completed' ? 'success' : 'primary'}
+                  variant={activeImplementationStatus === 'completed' ? 'success' : 'primary'}
                   size="sm"
                 >
-                  {activeImplementation?.status || 'Inasubiri Uteuzi'}
+                  {activeImplementationStatus || 'Inasubiri Uteuzi'}
                 </Badge>
               </div>
               <h3 className="font-bold text-[#0B2F66] text-sm">
-                {activeMerchant.activeProductId
-                  ? `Mfumo Uliochaguliwa: ${activeMerchant.activeProductId}`
+                {activeMerchant.currentProductId
+                  ? `Mfumo Uliochaguliwa: ${activeMerchant.currentProductId}`
                   : 'Bado Hujachagua Mfumo'}
               </h3>
               <p className="text-xs text-gray-500">
                 {activeImplementation
-                  ? `Mtaalamu: ${activeImplementation.assignedSpecialistName} (Hatua za Go-Live)`
+                  ? `Mtaalamu: ${activeImplementation.specialistName} (Hatua za Go-Live)`
                   : 'Ukichagua mfumo, mtaalamu wetu atakusaidia kufanya usanidi na mafunzo.'}
               </p>
             </div>
           </div>
 
           {/* Prompt banner if recommendation is waiting for selection */}
-          {latestRecommendation && !activeMerchant.activeProductId && (
+          {latestRecommendation && !activeMerchant.currentProductId && (
             <div className="bg-[#0B2F66] text-white rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-md border border-blue-900">
               <div className="flex items-start gap-3.5">
                 <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
@@ -402,10 +411,10 @@ export const MerchantPortal: React.FC = () => {
                 </div>
                 <div>
                   <h4 className="font-bold text-white text-sm">
-                    Ushauri wa Mshauri {latestRecommendation.adviserName} Umekamilika!
+                    Ushauri wa Mshauri {latestRecommendation.namedAdviserName} Umekamilika!
                   </h4>
                   <p className="text-xs text-blue-200 mt-0.5">
-                    Mshauri wako amependekeza mifumo {latestRecommendation.recommendedProducts.length} inayokidhi vigezo vyako vya TRA, uwezo wa kufanya kazi bila mtandao na bajeti.
+                    Mshauri wako amependekeza mifumo {latestRecommendation.recommendations.length} inayokidhi vigezo vyako vya TRA, uwezo wa kufanya kazi bila mtandao na bajeti.
                   </p>
                 </div>
               </div>
@@ -587,7 +596,7 @@ export const MerchantPortal: React.FC = () => {
                     Ripoti ya Ushauri: {latestRecommendation.id}
                   </h2>
                   <p className="text-xs text-slate-500">
-                    Iliandaliwa na: <strong className="text-slate-800">{latestRecommendation.adviserName}</strong> ({latestRecommendation.adviserRole}) | Tarehe: {latestRecommendation.issuedDate.split('T')[0]}
+                    Iliandaliwa na: <strong className="text-slate-800">{latestRecommendation.namedAdviserName}</strong> (Certified Technology Adviser) | Tarehe: {latestRecommendation.createdAt.split('T')[0]}
                   </p>
                 </div>
 
@@ -605,7 +614,7 @@ export const MerchantPortal: React.FC = () => {
                   Maoni na Sababu za Kitaalamu za Mshauri (Adviser Rationale):
                 </div>
                 <p className="text-xs text-slate-700 leading-relaxed italic">
-                  "{latestRecommendation.rationale}"
+                  "{latestRecommendation.adviserRationale}"
                 </p>
               </div>
 
@@ -616,8 +625,9 @@ export const MerchantPortal: React.FC = () => {
                 </h3>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {latestRecommendation.recommendedProducts.map((item) => {
-                    const isCurrentlySelected = activeMerchant.activeProductId === item.productId;
+                  {latestRecommendation.recommendations.map((item) => {
+                    const isCurrentlySelected = activeMerchant.currentProductId === item.productId;
+                    const recommendedProduct = products.find((product) => product.id === item.productId);
 
                     return (
                       <div
@@ -625,7 +635,7 @@ export const MerchantPortal: React.FC = () => {
                         className={`rounded-xl border p-5 flex flex-col justify-between space-y-4 transition-all ${
                           isCurrentlySelected
                             ? 'bg-blue-50/50 border-[#0B2F66] ring-2 ring-[#0B2F66]'
-                            : item.rank === 1
+                            : item.isPrimaryRecommendation
                             ? 'bg-amber-50/30 border-amber-300'
                             : 'bg-white border-slate-200'
                         }`}
@@ -633,13 +643,13 @@ export const MerchantPortal: React.FC = () => {
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <Badge
-                              variant={item.rank === 1 ? 'gold' : 'neutral'}
+                              variant={item.isPrimaryRecommendation ? 'gold' : 'neutral'}
                               size="sm"
                             >
-                              {item.rank === 1 ? 'Chaguo Kuu (Primary Recommendation)' : 'Mbadala (Alternative Option)'}
+                              {item.isPrimaryRecommendation ? 'Chaguo Kuu (Primary Recommendation)' : 'Mbadala (Alternative Option)'}
                             </Badge>
                             <span className="text-xs font-bold text-[#0B2F66]">
-                              {item.fitScore}% Fit Score
+                              {item.matchScore}% Fit Score
                             </span>
                           </div>
 
@@ -652,21 +662,21 @@ export const MerchantPortal: React.FC = () => {
 
                           <div className="bg-white/80 p-3 rounded-lg border border-slate-200 text-xs space-y-1">
                             <span className="font-bold text-slate-800 block">Kwa nini mfumo huu?</span>
-                            <p className="text-[11px] text-slate-600">{item.whyThisProduct}</p>
+                            <p className="text-[11px] text-slate-600">{item.implementationNotes}</p>
                           </div>
 
                           <div className="text-xs space-y-1 pt-1">
                             <div className="flex justify-between">
                               <span className="text-slate-500">Ada ya Mwezi:</span>
-                              <strong>TZS {item.monthlyCostTZS.toLocaleString()}</strong>
+                              <strong>TZS {Math.round(item.totalCostEstimateTZS.estimatedAnnualRecurring / 12).toLocaleString()}</strong>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-slate-500">Gharama ya Usanidi (Setup):</span>
-                              <strong>TZS {item.setupCostTZS.toLocaleString()}</strong>
+                              <strong>TZS {(item.totalCostEstimateTZS.hardware + item.totalCostEstimateTZS.setupAndMigration + item.totalCostEstimateTZS.training).toLocaleString()}</strong>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-slate-500">Muda wa Kuanza:</span>
-                              <strong>{item.estimatedRolloutDays} Siku</strong>
+                              <strong>{recommendedProduct?.implementationEffortDays || '—'} Siku</strong>
                             </div>
                           </div>
                         </div>
@@ -704,7 +714,7 @@ export const MerchantPortal: React.FC = () => {
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 text-[#0B2F66] shrink-0 mt-0.5" />
                 <p className="text-[11px] leading-relaxed">
-                  <strong>Mwongozo wa Malipo:</strong> Malipo ya programu hulipwa moja kwa moja kwa mtoa huduma ({latestRecommendation.recommendedProducts[0]?.vendorName}). Biashara Salama inatoa ufuatiliaji, mkataba wa huduma na usimamizi wa uhakiki bila kutoza tozo za siri.
+                  <strong>Mwongozo wa Malipo:</strong> Malipo ya programu hulipwa moja kwa moja kwa mtoa huduma ({latestRecommendation.recommendations[0]?.vendorName}). Biashara Salama inatoa ufuatiliaji, mkataba wa huduma na usimamizi wa uhakiki bila kutoza tozo za siri.
                 </p>
               </div>
             </div>
@@ -742,15 +752,15 @@ export const MerchantPortal: React.FC = () => {
                     Mradi wa Go-Live: {activeImplementation.id}
                   </h2>
                   <p className="text-xs text-slate-500">
-                    Mtaalamu wa Usanidi: <strong className="text-slate-800">{activeImplementation.assignedSpecialistName}</strong> | Tarehe ya Kukamilika: {activeImplementation.targetGoLiveDate}
+                    Mtaalamu wa Usanidi: <strong className="text-slate-800">{activeImplementation.specialistName}</strong> | Tarehe ya Kukamilika: {targetGoLiveDate || 'Haijapangwa'}
                   </p>
                 </div>
 
                 <Badge
-                  variant={activeImplementation.status === 'completed' ? 'success' : 'primary'}
+                  variant={activeImplementationStatus === 'completed' ? 'success' : 'primary'}
                   size="md"
                 >
-                  Hali: {activeImplementation.status}
+                  Hali: {activeImplementationStatus}
                 </Badge>
               </div>
 
@@ -758,7 +768,7 @@ export const MerchantPortal: React.FC = () => {
               <div className="space-y-3">
                 <h3 className="font-bold text-slate-900 text-sm">Hatua za Utekelezaji (Milestones):</h3>
                 <div className="space-y-3">
-                  {activeImplementation.milestones.map((ms, idx) => (
+                  {activeImplementation.tasks.map((ms, idx) => (
                     <div
                       key={ms.id}
                       className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
@@ -783,9 +793,9 @@ export const MerchantPortal: React.FC = () => {
                         </div>
                         <div className="space-y-0.5">
                           <h4 className="font-bold text-xs text-slate-900">{ms.title}</h4>
-                          <p className="text-[11px] text-slate-600">{ms.description}</p>
+                          <p className="text-[11px] text-slate-600">{ms.evidenceNotes || `Assigned to ${ms.assignedTo}`}</p>
                           <span className="text-[10px] text-slate-500 block">
-                            Tarehe Lengo: {ms.targetDate}
+                            Tarehe Lengo: {ms.dueDate}
                           </span>
                         </div>
                       </div>
@@ -850,7 +860,7 @@ export const MerchantPortal: React.FC = () => {
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-slate-900">{tk.id}</span>
-                        <span className="text-xs font-semibold text-[#0B2F66]">{tk.subject}</span>
+                        <span className="text-xs font-semibold text-[#0B2F66]">{tk.title}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge
@@ -866,10 +876,10 @@ export const MerchantPortal: React.FC = () => {
                           {tk.status}
                         </Badge>
                         <Badge
-                          variant={tk.priority === 'critical' ? 'danger' : 'neutral'}
+                          variant={tk.severity === 'critical' ? 'danger' : 'neutral'}
                           size="sm"
                         >
-                          {tk.priority}
+                          {tk.severity}
                         </Badge>
                       </div>
                     </div>
@@ -921,12 +931,12 @@ export const MerchantPortal: React.FC = () => {
                         onChange={(e) => setTicketCategory(e.target.value as any)}
                         className="w-full px-3 py-2 border border-slate-300 rounded-md outline-none bg-white text-xs"
                       >
-                        <option value="tra_vfd_failure">Hitilafu ya Risiti ya TRA VFD</option>
-                        <option value="offline_sync_error">Kusawazisha Mauzo ya Nje ya Mtandao</option>
-                        <option value="hardware_printer">Printa / Scanner ya Barcode</option>
-                        <option value="user_training">Msaada wa Mafunzo ya Mfanyakazi</option>
-                        <option value="billing_dispute">Ufafanuzi wa Bili ya Leseni</option>
-                        <option value="general">Mengineyo</option>
+                        <option value="data_issue">Hitilafu ya Risiti ya TRA VFD / Data</option>
+                        <option value="defect">Kusawazisha Mauzo / Mfumo</option>
+                        <option value="hardware_fault">Printa / Scanner ya Barcode</option>
+                        <option value="training_gap">Msaada wa Mafunzo ya Mfanyakazi</option>
+                        <option value="billing_inquiry">Ufafanuzi wa Bili ya Leseni</option>
+                        <option value="complaint">Malalamiko Mengine</option>
                       </select>
                     </div>
 
